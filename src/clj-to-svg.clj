@@ -4,15 +4,11 @@
  '{:deps
    {borkdude/spartan.spec {:git/url "https://github.com/borkdude/spartan.spec"
                                :sha "e5c9f40ebcc64b27b3e3e83ad2a285ccc0997097"}
-    svg-clj/svg-clj {:local/root "/Users/adam/dev/svg-clj"}}
+    svg-clj/svg-clj {:git/url "https://github.com/adam-james-v/svg-clj"
+                     :sha "aaf78937d7a59e11aa7b193c2f9da35d9d159ca6"}}
    :classpath-overrides {org.clojure/clojure nil
                          org.clojure/spec.alpha nil
                          org.clojure/core.specs.alpha nil}})
-
-#_(require '[clojure.string :as st]
-         '[svg-clj.main :refer :all]
-         '[hiccup.core :refer [html]])
-
 
 (ns clj-to-svg.main
   (:require [spartan.spec :as s]

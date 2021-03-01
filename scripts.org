@@ -35,7 +35,6 @@ The build folder is on my PATH env variable, so as soon as a script is moved and
 
 #+end_src
 
-
 * uberscripter
 Run this from the top level of the scripts folder to create an uberscript in the build folder.
 
@@ -44,6 +43,14 @@ Example:
 bb uberscripter src/clj-to-scad.clj
 
 creates the file build/clj-to-scad.uber.clj
+
+Uberscripter assumes that the first line in the script is the shebang line. Then, it assumes that the second form will be in the form:
+
+#+begin_src clojure
+(babashka.deps/add-deps '{:deps your-deps-map})
+#+end_src
+
+It's a naive approach, but if you have that initial format for your script, uberscripter will properly find deps and build a classpath.
 
 #+begin_src clojure :tangle ./uberscripter.clj
 (ns uberscripter.core
@@ -117,7 +124,7 @@ Run this from the top level of the scripts folder to create a standard script in
 
 Example:
 
-bb uberscripter src/clj-to-scad.clj
+bb scripter src/clj-to-scad.clj
 
 creates the file build/clj-to-scad.clj
 
@@ -163,13 +170,18 @@ This is meant to be used for projects that have trouble being built with the ube
 * clj->scad
 Builds .clj files using the scad-clj library. Result is a compiled .scad file.
 
+The script does not require any programs to be installed, though you may want to have OpenSCAD to be able to see the result.
+
+This could be useful in a file-watcher pipeline.
+
 ** deps
 #+begin_src clojure :tangle ./src/clj-to-scad.clj
 #!/usr/bin/env bb
 
 (babashka.deps/add-deps
  '{:deps
-   {scad-clj/scad-clj {:local/root "/Users/adam/dev/scad-clj"}}})
+   {scad-clj/scad-clj {:mvn/version "0.5.3"}}
+   #_{scad-clj/scad-clj {:local/root "/Users/adam/dev/scad-clj"}}})
 #+end_src
 
 ** main
@@ -207,6 +219,9 @@ diff <(xxd bin1) <(xxd bin2)
 
 I can use the above to clean up the python script/freecad invocation. basically eliminating the need to spit fcscript.py to disk.
 
+This script requires my local scad-clj fork (sorry). That's because it needs to emit csg, not scad (an undocumented subset of scad language).
+
+It also requires an installation of freecad, so it's a heavy project for the time being.
 
 ** deps
 #+begin_src clojure :tangle ./src/clj-to-step.clj
@@ -282,7 +297,8 @@ Builds .clj files using the scad-clj library. Result is a compiled .scad file.
  '{:deps
    {borkdude/spartan.spec {:git/url "https://github.com/borkdude/spartan.spec"
                                :sha "e5c9f40ebcc64b27b3e3e83ad2a285ccc0997097"}
-    svg-clj/svg-clj {:local/root "/Users/adam/dev/svg-clj"}}
+    svg-clj/svg-clj {:git/url "https://github.com/adam-james-v/svg-clj"
+                     :sha "aaf78937d7a59e11aa7b193c2f9da35d9d159ca6"}}
    :classpath-overrides {org.clojure/clojure nil
                          org.clojure/spec.alpha nil
                          org.clojure/core.specs.alpha nil}})
@@ -290,11 +306,6 @@ Builds .clj files using the scad-clj library. Result is a compiled .scad file.
 
 ** main
 #+begin_src clojure :tangle ./src/clj-to-svg.clj
-#_(require '[clojure.string :as st]
-         '[svg-clj.main :refer :all]
-         '[hiccup.core :refer [html]])
-
-
 (ns clj-to-svg.main
   (:require [spartan.spec :as s]
             [clojure.string :as st]
@@ -319,8 +330,10 @@ Builds .clj files using the scad-clj library. Result is a compiled .scad file.
 (build (first *command-line-args*))
 #+end_src
 * slice-anim
+This doesn't work yet.
+
 ** deps
-#+begin_src clojure :tangle ./src/scad-slice.clj
+#+begin_src clojure tangle ./src/scad-slice.clj
 #!/usr/bin/env bb
 
 (babashka.deps/add-deps
@@ -332,7 +345,7 @@ Builds .clj files using the scad-clj library. Result is a compiled .scad file.
 #+end_src
 
 ** main
-#+begin_src clojure :tangle ./src/scad-slice.clj
+#+begin_src clojure tangle ./src/scad-slice.clj
 (ns scad-slice.main
   (:require [spartan.spec]
             [clojure.spec.alpha :as s]

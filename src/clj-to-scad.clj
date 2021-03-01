@@ -2,7 +2,8 @@
 
 (babashka.deps/add-deps
  '{:deps
-   {scad-clj/scad-clj {:local/root "/Users/adam/dev/scad-clj"}}})
+   {scad-clj/scad-clj {:mvn/version "0.5.3"}}
+   #_{scad-clj/scad-clj {:local/root "/Users/adam/dev/scad-clj"}}})
 
 (ns clj-to-scad.main
   (:require [clojure.string :as st]
