@@ -1,9 +1,19 @@
 #!/usr/bin/env bb
 
+(babashka.deps/add-deps
+ '{:deps
+   {borkdude/spartan.spec {:git/url "https://github.com/borkdude/spartan.spec"
+                               :sha "e5c9f40ebcc64b27b3e3e83ad2a285ccc0997097"}
+    svg-clj/svg-clj {:local/root "/Users/adam/dev/svg-clj"}}})
+
 (ns vidwiz.main
   "This is a prototype script for automating a portion of my video editing using ffmpeg."
   (:require [clojure.java.shell :refer [sh]]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [hiccup.core :refer [html]]
+            [svg-clj.main :as svg]
+            [svg-clj.path :as path]
+            [svg-clj.transforms :as tf]))
 
 ;; utils
 (defn get-extension
@@ -42,8 +52,8 @@
     (sh "convert" nfname "-colors" "1" nfname)
     (let [col (->> (sh "identify" "-verbose" nfname)
                    :out
-                   (st/split-lines)
-                   (drop-while #(not (st/includes? % "Histogram")))
+                   (str/split-lines)
+                   (drop-while #(not (str/includes? % "Histogram")))
                    (second)
                    (re-find #"\#......"))]
       (sh "rm" nfname)
@@ -75,30 +85,38 @@
     (zipmap keys vals)))
 
 (defn yt-url->video-data [url]
-  (let [[title video-url _ descr]
-        (-> (sh "youtube-dl" "-e" "-g" "--get-description" url)
+  (let [[title video-url audio-url]
+        (-> (sh "youtube-dl" 
+                "--get-title" "--youtube-skip-dash-manifest" "-g" url)
             (:out)
             (str/split-lines))]
     {:title title
-     :descr descr
+     :audio-url audio-url
      :video-url video-url}))
 
-(defn save-clip! [video-url time dur fname]
+(defn save-clip! [video-url audio-url time dur fname]
   (sh "ffmpeg" 
       "-ss" time
       "-i" video-url
-      "-t" dur
-      "-s" "1920x1080" 
-      fname))
+      "-ss" time
+      "-i" audio-url
+      "-map" "0:v" "-map" "1:a"
+      "-t" (str dur)
+      "-y" fname))
 
 (defn clip! [url dur]
   (let [urlp (parse-url url)
         data (yt-url->video-data (:url urlp))
         video-url (:video-url data)
+        audio-url (:audio-url data)
         name (clean-name (:title data))
         stime (seconds->timestamp (read-string (:t urlp)))
         fname (str name ".mov")]
-    (save-clip! video-url stime dur fname)))
+    (save-clip! video-url audio-url stime dur fname)))
+
+(defn png! [fname svg-data]
+  (sh "convert" "-background" "none" "/dev/stdin" fname
+      :in (html svg-data)))
 
 (defn pad-screen
   [{:keys [fname left right] :as m}]
@@ -153,8 +171,8 @@
            "-af" "silencedetect=noise=0.6:d=0.01"
            "-f" "null" "-")
        :err
-       (st/split-lines)
-       (drop-while #(not (st/includes? % "silence_end:")))
+       (str/split-lines)
+       (drop-while #(not (str/includes? % "silence_end:")))
        (first)
        (re-find #"silence_end: .+")
        (re-find #"\d+\.\d+")
@@ -199,7 +217,7 @@
 
 (defn nicer-vertical
   [fname]
-  (let [[name ext] (st/split "." fname)
+  (let [[name ext] (str/split "." fname)
         nfname (apply str [name "-nice" "." ext])]
     (sh "ffmpeg"
         "-i" fname
@@ -217,7 +235,7 @@
            "-af" "silencedetect=n=-37dB:d=0.7"
            "-f" "null" "-")
        :err
-       (st/split-lines)
+       (str/split-lines)
        (map #(re-find #"silence_.+" %))
        (filter #(not (nil? %)))
        (map #(re-find #"\d+\.?(\d+)?" %))
@@ -230,7 +248,7 @@
 (defn clip-video
   [fname {:keys [s e]}]
   (let [dur (- e s)
-        tmpf (str (st/replace (str s) "." "_")
+        tmpf (str (str/replace (str s) "." "_")
                   "-" fname)]
     (sh "ffmpeg" "-i" fname 
         "-ss" (str s) "-t" (str dur)
@@ -239,7 +257,7 @@
 (defn cut-merge
   [fname times]
   (let [fnames (map 
-                #(str (st/replace (str (:s %)) "." "_")
+                #(str (str/replace (str (:s %)) "." "_")
                       "-" fname)
                 times)]
     ;; create clips
@@ -254,6 +272,114 @@
     ;; delete tmp files
     (mapv #(sh "rm" %) fnames)
     (sh "rm" (str fname ".txt"))))
+
+(def font-import
+  [:style "
+@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@600&display=swap');
+
+"])
+
+
+(defn iso-text [text]
+  (->> (svg/text text)
+       (svg/style {:transform "rotate(0 0 0) matrix(0.707 0.409 -0.707 0.409 0 -0.816)"})))
+
+(defn svg
+  [[w h sc] & content]
+  (assoc-in 
+   (svg/svg [w h sc] 
+            font-import
+            (first content))
+   [1 :viewBox]
+   (str/join " " [(/ w -2.0) (/ h -2.0) w h])))
+
+(def test-overlay
+  (let [obj 
+        (fn [t]
+          (->> (iso-text "adam-james")
+               (svg/style {:fill (str "rgb(100,170,123)")
+                           :stroke (str "rgb(80,210,145)")
+                           :opacity t
+                           :stroke-width "1px"
+                           :text-anchor "middle"
+                           :font-size 120
+                           :font-family "Oswald"
+                           :font-weight "600"})))]
+    (svg [600 600]
+         (let [step 0.1]
+           (for [t (range step (+ step 1) step)]
+             (->> (obj t)
+                  (tf/translate [(* -100 t) (* -100 t)])))))))
+
+(defn- anim-frames! [f name framerate dur]
+  (let [mkdir (sh "mkdir" "-pv" name)
+        frames (int (* framerate dur))
+        framefn (fn [fr] (png! 
+                          (format (str name "/%03d.png") fr)
+                          (f (/ fr frames))))]
+    (when (= 0 (:exit mkdir))
+      (into [] (pmap framefn (range 1 (inc frames)))))))
+
+(defn- anim-video! [name framerate]
+  (let [ffmpeg 
+        (sh "ffmpeg" "-f" "image2" "-r" (str framerate)
+            "-i" (str name "/%03d.png")
+            "-c:v" "libvpx-vp9" "-vf" "format=rgba"
+            "-pix_fmt" "yuva420p" "-b:v" "800k"
+            "-y" (str name ".webm"))]
+    (when (= 0 (:exit ffmpeg))
+      (sh "rm" "-rf" name))))
+
+(defn animate! [{:keys [graphics-fn name framerate duration]}]
+  (do (anim-frames! graphics-fn name framerate duration)
+      (anim-video! name framerate)))
+
+;; wip
+;;(defn layer [fname layers])
+
+(defn ease-in-out-cubic [t]
+  (if (< t 0.5)
+    (* 4 t t t)
+    (- 1 (/ (Math/pow (+ 2 (* t -2)) 3) 2))))
+
+(def circle-anim
+  {:name "circle"
+   :framerate 30
+   :duration 4
+   :graphics-fn
+   (fn [t]
+     (let [nt (ease-in-out-cubic t)]
+       (svg [600 600]
+            (->> (svg/circle 35)
+                 (tf/translate [-300 -300])
+                 (tf/translate [(* nt 600) (* nt 600)])
+                 (svg/style {:fill "pink"
+                             :stroke "hotpink"
+                             :stroke-width "4px"})))))})
+
+(def circle2-anim
+  {:name "circle2"
+   :framerate 30
+   :duration 4
+   :graphics-fn
+   (fn [t]
+     (let [nt (ease-in-out-cubic t)]
+       (svg [600 600]
+            (->> (svg/circle 35)
+                 (tf/translate [-300 300])
+                 (tf/translate [(* nt 600) (* nt -600)])
+                 (svg/style {:fill "limegreen"
+                             :stroke "green"
+                             :stroke-width "4px"})))))})
+
+(comment
+  (animate! circle-anim)
+  (animate! circle2-anim)
+  ;; WIP
+  (layer "circles.webm"
+         [{:file "circle.webm" :x 0 :y 0 :t 0}
+          {:file "circle2.webm" :x 0 :y 0 :t 0}])
+)
 
 #_(spit "props.edn" 
     {:screen

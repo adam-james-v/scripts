@@ -12,3 +12,11 @@ pom.xml.asc
 .lein-failures
 .nrepl-port
 .cpcache/
+*.webm
+*.mov
+*.png
+*.html
+*.svg
+*.mp4
+*.step
+*.stl
