@@ -229,6 +229,20 @@
              "[blur][sc2]overlay=(main_w-overlay_w)/2:0:shortest=1")
         "-c:a" "copy" "-y" nfname)))
 
+(defn nicer-vertical
+  [fname]
+  (let [[name ext] (str/split "." fname)
+        nfname (apply str [name "-nice" "." ext])]
+    (sh "ffmpeg"
+        "-i" fname
+        "-filter_complex"
+        (str "[0:v]scale=w=ih[sc1];"
+             "[sc1]crop=h=1080[crop]"
+             "[crop]gblur=steps=20[blur]"
+             "[0:v]scale=h=iw[sc2];"
+             "[blur][sc2]overlay=(main_w-overlay_w)/2:0:shortest=1")
+        "-c:a" "copy" "-y" nfname)))
+
 (defn get-sounds
   [fname]
   (->> (sh "ffmpeg" "-i" fname
@@ -414,4 +428,4 @@
       (fix-audio "merged.mov")
       (sh "cp" "fixed-audio.mov" "_precut.mov"))))
 
-(main)
+#_(main)

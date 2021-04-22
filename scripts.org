@@ -27,11 +27,58 @@ I use scripter.clj and uberscripter.clj to 'build' my src scripts.
 bb uberscripter.clj src/some-script.clj
 ```
 
+You can also open scripts.org in emacs and use cider-connect to build/use script code interactively.
+
+In a terminal, in the project's top level launch an nrepl with babashka
+
+```
+bb --nrepl-server
+```
+
+Then, in emacs using CIDER, you can connet to the REPL. The below example has the default host/port.
+
+```
+M-x cider-connect RET
+localhost
+1667
+```
+
+You can use other REPL/emacs plugin combinations. The [babashka book](https://book.babashka.org/) is a good place to start when looking for setup instructions and ideas.
+
+Once you're connected, you can load any script and get hacking! If I want to mess around with the 'vidwiz' script, I would eval the following in the REPL to load the code and enter the ns:
+
+```clojure
+(load-file "src/vidwiz.clj")
+
+(ns vidwiz.main
+  "This is a prototype script for automating a portion of my video editing using ffmpeg."
+  (:require [clojure.java.shell :refer [sh]]
+            [clojure.string :as str]
+            [hiccup.core :refer [html]]
+            [svg-clj.main :as svg]
+            [svg-clj.path :as path]
+            [svg-clj.transforms :as tf]))
+```
+
+Just be aware of any scripts with side-effects!
+
+## Scripter/Uberscripter
+
 Uberscripter uses babashka's --uberscript option to create a single-file script. It looks at the file's deps and copies code into the file.
 
 Scripter is much simpler and just copies a src script into build and makes it executable. This is useful for situations where a script doesn't work nicely with uberscript, for example, if your script uses clojure.spec.
 
 The build folder is on my PATH env variable, so as soon as a script is moved and made executable, it becomes available from anywhere. You will need to start a new terminal session or refresh your current one to see this take effect.
+
+## Contribution
+
+Feel free to fork, clone, make PRs, whatever.
+
+Changes will be implemented at my discretion, because these are scripts tuned to my needs/workflow anyway.
+
+You can create issues to bring up improvements, questions, and ideas as well, if you'd like. 
+
+Be kind and constructive.
 
 #+end_src
 
@@ -930,6 +977,27 @@ Src of the yt-dl and ffmpeg commands from
 
 #+end_src
 
+** blur-border-resize
+Use this to turn lower res footage into higher res footage by scale/blur/overlay, just like 'nicer vertical' but centering the original footage.
+
+This is mostly used for turning 720p footage into neat looking 1080p for highlight videos or something like that.
+
+#+BEGIN_SRC clojure :tangle ./src/vidwiz.clj
+(defn nicer-vertical
+  [fname]
+  (let [[name ext] (str/split "." fname)
+        nfname (apply str [name "-nice" "." ext])]
+    (sh "ffmpeg"
+        "-i" fname
+        "-filter_complex"
+        (str "[0:v]scale=w=ih[sc1];"
+             "[sc1]crop=h=1080[crop]"
+             "[crop]gblur=steps=20[blur]"
+             "[0:v]scale=h=iw[sc2];"
+             "[blur][sc2]overlay=(main_w-overlay_w)/2:0:shortest=1")
+        "-c:a" "copy" "-y" nfname)))
+#+end_src
+
 ** nicer-vertical
 Make vertical footage look better by scaling and blurring the footage to fill black bars.
 
@@ -1147,7 +1215,9 @@ ffmpeg -vcodec libvpx-vp9 -i in1.webm
 #+END_SRC
 
 ** cli
-Try out the first pipeline.
+I'll need to come up with a more general CLI that lets me do the various things I want. Not every video project needs the same functionality, so having a single expected map format as the input isn't quite useful enough.
+
+
 
 #+BEGIN_SRC clojure :tangle ./src/vidwiz.clj
 #_(spit "props.edn" 
@@ -1183,6 +1253,6 @@ Try out the first pipeline.
       (fix-audio "merged.mov")
       (sh "cp" "fixed-audio.mov" "_precut.mov"))))
 
-(main)
+#_(main)
 
 #+end_src
