@@ -27,8 +27,8 @@ Then, in emacs using CIDER, you can connet to the REPL. The below example has th
 
 ```
 M-x cider-connect RET
-localhost
-1667
+localhost RET
+1667 RET
 ```
 
 You can use other REPL/emacs plugin combinations. The [babashka book](https://book.babashka.org/) is a good place to start when looking for setup instructions and ideas.
