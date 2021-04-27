@@ -11,6 +11,7 @@
   (:require [clojure.java.shell :refer [sh]]
             [clojure.string :as str]
             [hiccup.core :refer [html]]
+            [cheshire.core :refer [parse-string]]
             [svg-clj.main :as svg]
             [svg-clj.path :as path]
             [svg-clj.transforms :as tf]))
@@ -20,13 +21,49 @@
   [fname]
   (re-find #"\.[A-Za-z\d+]+" fname))
 
-(defn get-resolution
+(defn get-resolution-old
   [fname]
   (->> (sh "ffprobe" "-i" fname)
        :err
        (re-find #"\d\d+x\d+")
        (#(str/split % #"x"))
        (mapv read-string)))
+
+(defn get-resolution
+  [fname]
+  (when-let [{:keys [width height]}
+             (-> (sh "ffprobe"
+                     "-v"
+                     "error"
+                     "-select_streams"
+                     "v:0"
+                     "-show_entries"
+                     "stream=width,height"
+                     "-of" "json"
+                     fname)
+                 :out
+                 (parse-string true)
+                 :streams
+                 first)]
+    [width height]))
+
+(defn get-duration
+  [fname]
+  (when-let [{:keys [duration]}
+             (-> (sh "ffprobe"
+                     "-v"
+                     "error"
+                     "-select_streams"
+                     "v:0"
+                     "-show_entries"
+                     "stream=duration"
+                     "-of" "json"
+                     fname)
+                 :out
+                 (parse-string true)
+                 :streams
+                 first)]
+    (read-string duration)))
 
 (defn overlay-offsets
   [{:keys [border base-dims overlay-dims pos gap fname]}]
@@ -165,6 +202,8 @@
 (def example-layers 
   [{:file "clip001-bb.mov" :x 0 :y 0 :z 0}
    {:file "drw2.webm" :x 0 :y (- 1080 600) :z 1}])
+
+
 
 (defn pad-screen
   [{:keys [fname left right] :as m}]
@@ -365,7 +404,7 @@
 
 (defn nicer-vertical
   [fname]
-  (let [[name ext] (st/split fname #"\.")
+  (let [[name ext] (str/split fname #"\.")
         nfname (apply str [name "-nice" "." ext])]
     (sh "ffmpeg"
         "-i" fname
@@ -650,26 +689,51 @@
           {:file "circle2.webm" :x 0 :y 0 :t 0}])
   )
 
-(def bg
-  (svg/svg 
-   [1920 1080 1]
-   (->> (svg/rect 1920 1080)
-        (tf/translate [960 540])
-        (svg/style {:fill "rgb(45,52,64)"}))
-   (for [x (range 0 1920 75)
-         y (range 0 1080 75)]
-     (->> (svg/text "adam-james")
-          (tf/rotate -45)
-          (tf/translate [x y])
-          (svg/style {:fill "none"
-                      :stroke-dasharray 100
-                      :stroke-dashoffset 100
-                      :animation "draw 2s linear forwards"
-                      :stroke-width "1px"
-                      :stroke "hotpink"
-                      :font-family "Oswald"
-                      :font-weight "600"
-                      :font-size "16"})))))
+(def title-anim
+  {:name "twitch"
+   :framerate 60
+   :duration 5
+   :graphics-fn
+   (fn [t]
+     (let [nt (ease-in-out-cubic t)]
+       (svg/svg 
+        [1920 1080 1]
+        #_(->> (svg/circle (* 1200 2 nt))
+             (tf/translate [960 540])
+             (svg/style {:fill "rgb(45,52,64)"}))
+        (->> (svg/text "twitch.tv/adam_james_tv")
+             (tf/rotate 0)
+             (tf/translate [960 540])
+             (tf/translate [0 450])
+             (svg/style {:fill "#FEFEFE"
+                         :opacity "0.90"
+                         :text-anchor "middle"
+                         :font-family "Oswald"
+                         :font-weight "600"
+                         :font-size "120px"}))
+        (->> (svg/text "twitch.tv/adam_james_tv")
+             (tf/rotate 0)
+             (tf/translate [960 540])
+             (tf/translate [0 450])
+             (svg/style {:fill "#9146FF"
+                         :opacity "0.25"
+                         :text-anchor "middle"
+                         :font-family "Oswald"
+                         :font-weight "600"
+                         :font-size "120px"}))
+        (->> (svg/text "twitch.tv/adam_james_tv")
+             (tf/rotate 0)
+             (tf/translate [960 540])
+             (tf/translate [0 450])
+             (svg/style {:fill "none"
+                         :stroke-dasharray 700
+                         :stroke-dashoffset (* 700 (- 1 nt))
+                         :stroke-width "2px"
+                         :stroke "#9146FF"
+                         :text-anchor "middle"
+                         :font-family "Oswald"
+                         :font-weight "600"
+                         :font-size "120px"})))))})
 
 ;; input
 (def sample-clip
@@ -688,7 +752,7 @@
         base-clip-name (str name "/base-clip")
         xf-clip-name (str name "/base-clip-bub.mov")]
     ;; create clip directory
-    (sh "mkdir" (str name))
+    (sh "mkdir" "-pv" (str name))
     ;; create all animation layers
     (animate! {:name anim-name 
                :duration 5
@@ -710,7 +774,30 @@
     ;; can delete intermediate files, but probably good to keep them
     #_(sh "rm" "-rf" (str name))))
 
-#_(spit "props.edn" 
+(defn crossfade
+  [[fnamea fnameb] dur]
+  (let [[namea exta] (str/split fnamea #"\.")
+        [nameb extb] (str/split fnameb #"\.")
+        nameb (last (str/split nameb #"/"))
+        fname (str namea "-" nameb "." exta)
+        dura (get-duration fnamea)
+        durb (get-duration fnameb)
+        [w h] (get-resolution fnamea)
+        total-dur (+ dura durb (- dur))]
+    (sh "ffmpeg"
+        "-i" fnamea
+        "-i" fnameb
+        "-filter_complex"
+        (str "color=black:1920x1080:d=" total-dur "[base];"
+             "[0:v]setpts=PTS-STARTPTS[v0];"
+             "[1:v]format=yuva420p,fade=in:st=0:d=" dur ":alpha=1,setpts=PTS-STARTPTS+(" (- dura dur) "/TB)[v1];"
+             "[base][v0]overlay[tmp];"
+             "[tmp][v1]overlay,format=yuv420p[fv];"
+             "[0:a][1:a]acrossfade=d=" dur "[fa]")
+        "-map" "[fv]" "-map" "[fa]"
+        "-y" fname)))
+
+(def example-props
     {:screen
      {:fname "scr.mov"
       :left {:width 667 :offset 0}
@@ -726,6 +813,16 @@
       :gap 70
       :pos {:h :r :v :b}}})
 
+(defn stream-highlighter
+  []
+  (let [fname (first *command-line-args*)
+        clips (when (= (get-extension fname) ".edn")
+                (read-string (slurp fname)))]
+    (do
+      (println (str "Total Seconds: " (reduce + (map :duration clips))))
+      (mapv stream-highlight-clip! clips)
+      #_(println "done"))))
+
 (defn main
   "Main runs when vidwiz is run as a script.
   
@@ -737,10 +834,10 @@
         props (when (= (get-extension fname) ".edn")
                 (read-string (slurp fname)))]
     (when props
-      #_(crop-pad-screen (:screen props))
+      (crop-pad-screen (:screen props))
       (pad-screen (:screen props))
       (overlay-camera  (:camera props))
       (fix-audio "merged.mov")
       (sh "cp" "fixed-audio.mov" "_precut.mov"))))
 
-#_(main)
+#_(stream-highlighter)

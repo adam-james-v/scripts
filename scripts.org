@@ -227,28 +227,269 @@ This could be useful in a file-watcher pipeline.
 
 (babashka.deps/add-deps
  '{:deps
-   {scad-clj/scad-clj {:mvn/version "0.5.3"}}
-   #_{scad-clj/scad-clj {:local/root "/Users/adam/dev/scad-clj"}}})
+   #_{scad-clj/scad-clj {:mvn/version "0.5.3"}}
+   {scad-clj/scad-clj {:local/root "/Users/adam/dev/scad-clj"}}})
+
 #+end_src
 
-** main
+** ns
 #+begin_src clojure :tangle ./src/clj-to-scad.clj
 (ns clj-to-scad.main
-  (:require [clojure.string :as st]
+  (:require [clojure.java.shell :refer [sh]]
+            [clojure.string :as str]
+            [clojure.data.xml :as xml]
+            [svg-clj.path :as path]
+            [svg-clj.utils :as utils]
+            [svg-clj.transforms :as tf]
             [scad-clj.model :refer :all]
             [scad-clj.scad :refer [write-scad]]))
 
+#+end_src
+
+** utils
+#+begin_src clojure :tangle ./src/clj-to-scad.clj
+(defn clj-file->scad-block
+  [fname]
+  (let [[name ext] (str/split fname #"\.")]
+    (if (= ext "scad")
+      (slurp fname)
+      (->> (slurp fname)
+           (format "[%s]")
+           load-string
+           (filter (complement var?))))))
+#+end_src
+
+** animation
+Chromakey works decently well, but requires you to make a custom 'greenscreen' color scheme file in OpenSCAD. background color is changed to #00FF00 so that chroma is easy to do. This won't work if you don't have the greenscreen json file in your OpenSCAD's install folder.
+
+You can manually change the colorscheme + chromakey color to use a built-in scheme and things should work OK.
+
+#+begin_src clojure :tangle ./src/clj-to-scad.clj
+(defn png!
+  [fname scad-block]
+  (let [scad (write-scad [(fn! 150) scad-block])]
+    (sh "openscad" "/dev/stdin"
+        "--imgsize" "600,600"
+        "--projection" "orthogonal"
+        "--colorscheme" "greenscreen"
+        "--camera" "0,0,0,55,0,25,2200"
+        "-o" fname
+        :in scad)))
+
+(defn- anim-frames! [f name framerate dur]
+  (let [mkdir (sh "mkdir" "-pv" name)
+        frames (int (* framerate dur))
+        framefn (fn [fr] (png! 
+                          (format (str name "/%03d.png") fr)
+                          (f (/ fr frames))))]
+    (when (= 0 (:exit mkdir))
+      (into [] (map framefn (range 1 (inc frames)))))))
+
+(defn- anim-video! [name framerate]
+  (let [ffmpeg 
+        (sh "ffmpeg" "-f" "image2" "-r" (str framerate)
+            "-i" (str name "/%03d.png")
+            "-c:v" "libvpx-vp9"
+            "-vf" "chromakey=0x00FF00:0.25:0.1"
+            "-y" (str name ".webm"))]
+    (when (= 0 (:exit ffmpeg))
+      (sh "rm" "-rf" name))))
+
+(defn animate! [{:keys [graphics-fn name framerate duration]}]
+  (do (anim-frames! graphics-fn name framerate duration)
+      (anim-video! name framerate)))
+
+#+end_src
+
+** img->scad
+#+begin_src clojure :tangle ./src/clj-to-scad.clj
+(defn img->str [fname]
+  "Ingest image file `fname` and transform it into a hiccup data structure."
+  (let [new-fname (str (first (str/split fname #"\.")) ".svg")]
+    (sh "vtracer" 
+        "--mode" "polygon"
+        "--colormode" "bw"
+        "--input" fname
+        "--output" new-fname)
+    (let [svg-str (slurp new-fname)]
+      (sh "rm" new-fname)
+      (-> svg-str
+          (str/replace #"<\?xml.+>" "")
+          str/trim))))
+
+;; xml parse/transform technique is from:
+;; https://github.com/babashka/babashka/blob/master/examples/portal.clj
+
+(defn xml->hiccup [xml]
+  (if-let [t (:tag xml)]
+    (let [elt [t]
+          elt (if-let [attrs (:attrs xml)]
+                (conj elt attrs)
+                elt)]
+      (into elt (map xml->hiccup (:content xml))))
+    xml))
+
+(defn str->elements
+  [str]
+  (-> str
+      (xml/parse-str :namespace-aware false
+                     :skip-whitespace true)
+      xml->hiccup
+      (->> (drop 2))))
+
+(defn split-path
+  [[k props]]
+  (let [ps (-> (:d props)
+               (str/split #"(?=M)")
+               (->> (map str/trim)))]
+    (map #(assoc-in [k props] [1 :d] %) ps)))
+
+(defn path->pts
+  [path-elem]
+  (let [cmds (path/path-string->commands (get-in path-elem [1 :d]))]
+    (mapv :input cmds)))
+
+#_(-> "drawing.png"
+      img->str
+      str->elements 
+      (->> (mapcat split-path)))
+
+(defn re-center
+  [seq]
+  (let [group (svg-clj.main/g seq)
+        ctr (mapv float (tf/centroid group))]
+    (->> seq
+         (map #(tf/translate (utils/v* [-1 -1] ctr) %)))))
+
+#+end_src
+
+** primitives
+#+begin_src clojure :tangle ./src/clj-to-scad.clj
+(defn line
+  [from to]
+  (let [r 0.7]
+    (color [0 0 0 1]
+           (if (= from to)
+             (sphere r)
+             (let [diff (map - to from)
+                   norm (utils/distance from to)
+                   rotate-angle (Math/acos (/ (last diff) norm))
+                   rotate-axis [(- (nth diff 1)) (nth diff 0) 0]]
+               (union
+                (sphere r)
+                (translate to (sphere r))
+                (->> (cylinder r norm)
+                     (translate [0 0 (/ norm 2)])
+                     (rotate rotate-angle rotate-axis)
+                     (translate from))))))))
+
+(defn polyline
+  [pts]
+  (apply union (map #(apply line %) (partition 2 1 pts))))
+
+(defn- add-z
+  [pts]
+  (map #(conj % 0) pts))
+
+(defn line-drawing
+  [fname]
+  (-> fname
+      img->str
+      str->elements
+      re-center
+      (->> (mapcat split-path))
+      (->> (map path->pts))
+      (->> (map add-z))
+      (->> (map polyline))
+      union))
+
+(defn- flip-y
+  [pts]
+  (map #(utils/v* % [1 -1]) pts))
+
+(defn svg-path-elem->scad-polygon
+  [path-elem]
+  (-> path-elem
+      split-path
+      (->> (map path->pts))
+      (->> (map flip-y))
+      (->> (map polygon))
+      (->> (apply difference))))
+
+(defn drawing
+  [fname]
+  (-> fname
+      img->str
+      str->elements
+      #_re-center
+      (->> (map svg-path-elem->scad-polygon))
+      union))
+
+(defn linecube
+  [x y z]
+  (union
+   (color [0 1 0 1] (cube x y z))
+   (translate [(/ x -2.0) (/ y -2.0) (/ z -2.0)]
+    (union
+     (line [0 0 0] [x 0 0])
+     (line [x 0 0] [x y 0])
+     (line [x y 0] [0 y 0])
+     (line [0 y 0] [0 0 0])
+     (line [0 0 0] [0 0 z])
+     (line [x 0 0] [x 0 z])
+     (line [x y 0] [x y z])
+     (line [0 y 0] [0 y z])
+     (line [0 0 z] [x 0 z])
+     (line [x 0 z] [x y z])
+     (line [x y z] [0 y z])
+     (line [0 y z] [0 0 z])))))
+
+(def cube-anim
+  {:name "cube"
+   :framerate 30
+   :duration 4
+   :graphics-fn
+   (fn [t]
+     (rotate [0 0 (* t (deg->rad 360))] (linecube 70 70 70)))})
+
+(def draw-anim
+  {:name "drawing"
+   :framerate 30
+   :duration 4
+   :graphics-fn
+   (fn [t]
+     (rotate [0 0 (* t (deg->rad 360))]
+             (->> (drawing "drawing2.png")
+                  (rotate [(deg->rad 90) 0 0]))))})
+
+(def vase-anim
+  {:name "vase"
+   :framerate 120
+   :duration 4
+   :graphics-fn
+   (fn [t]
+     (->> (drawing "drawing4.png")
+          (extrude-rotate {:angle (* t 360)})
+          (translate [0 0 300])))})
+
+#+end_src
+
+** cli
+To be improved. I want a mechanism to allow the user to make animations and/or clj->scad files quickly and easily.
+
+#+begin_src clojure :tangle ./src/clj-to-scad.clj
 (defn build
-  [f]
-  (let [fout (-> f (st/split #"\.") first (str ".scad"))]
-    (->> (slurp f)
+  [fname]
+  (let [fout (-> fname (str/split #"\.") first (str ".scad"))]
+    (->> (slurp fname)
          (format "[%s]")
          load-string
          (filter (complement var?))
          write-scad
          (spit fout))))
 
-(build (first *command-line-args*))
+#_(build (first *command-line-args*))
+
 #+end_src
 
 * clj->step
@@ -634,31 +875,23 @@ This script requires vtracer to be installed and available on your PATH.
    {borkdude/spartan.spec {:git/url "https://github.com/borkdude/spartan.spec"
                            :sha "e5c9f40ebcc64b27b3e3e83ad2a285ccc0997097"}
     org.clojure/math.combinatorics {:mvn/version "0.1.6"}
-    svg-clj/svg-clj {:local/root "/Users/adam/dev/svg-clj"}
-    #_{:git/url "https://github.com/adam-james-v/svg-clj"
-                     :sha "aaf78937d7a59e11aa7b193c2f9da35d9d159ca6"}}
-   :classpath-overrides {org.clojure/clojure nil
-                         org.clojure/spec.alpha nil
-                         org.clojure/core.specs.alpha nil}})
+    svg-clj/svg-clj {:local/root "/Users/adam/dev/svg-clj"}}})
+
 #+end_src
 
 ** ns
 #+begin_src clojure :tangle ./src/png-to-svg.clj
 (ns png-to-svg.main
-  (:require [spartan.spec :as s]
-            [clojure.string :as st]
+  (:require [clojure.string :as str]
             [clojure.math.combinatorics :as combo]
             [clojure.java.shell :refer [sh]]
+            [clojure.data.xml :as xml]
             [svg-clj.main :refer :all]
+            [svg-clj.path :as path]
             [svg-clj.utils :as utils]
-            [svg-clj.specs :as specs]
             [svg-clj.transforms :as tf]
             [hiccup.core :refer [html]]))
-(require '[spartan.spec])
-(alias 's 'clojure.spec.alpha)
 
-;; suggestion from Michiel @borkdude on stream
-(require '[clojure.spec.alpha :as s])
 #+end_src
 
 ** img->edn
@@ -674,43 +907,52 @@ This script requires vtracer to be installed and available on your PATH.
     (let [svg-str (slurp new-fname)]
       (sh "rm" new-fname)
       (-> svg-str
-          (st/replace #"<\?xml.+>" "")
-          st/trim))))
+          (str/replace #"<\?xml.+>" "")
+          str/trim))))
+
+;; xml parse/transform technique is from:
+;; https://github.com/babashka/babashka/blob/master/examples/portal.clj
+
+(defn xml->hiccup [xml]
+  (if-let [t (:tag xml)]
+    (let [elt [t]
+          elt (if-let [attrs (:attrs xml)]
+                (conj elt attrs)
+                elt)]
+      (into elt (map xml->hiccup (:content xml))))
+    xml))
 
 (defn str->elements
   [str]
-  (->> str
-       ->edn
-       (drop 2)))
+  (-> str
+      (xml/parse-str :namespace-aware false
+                     :skip-whitespace true)
+      xml->hiccup
+      (->> (drop 2))))
 
+(defn split-path
+  [[k props]]
+  (let [ps (-> (:d props)
+               (str/split #"(?=M)")
+               (->> (map str/trim)))]
+    (map #(assoc-in [k props] [1 :d] %) ps)))
 
-(defn tr
-  "Translates the `elems` by `x` and `y` relative to the element(s)'s current position(s).
+(defn path->pts
+  [path-elem]
+  (let [cmds (path/path-string->commands (get-in path-elem [1 :d]))]
+    (mapv :input cmds)))
 
-  For example, a shape sitting at [10 10] being translated by [10 10] will be located at [20 20] after translation."
-  [[x y] & elems]
-  (let [elem (first elems)
-        elems (rest elems)]
-    (when elem
-      (cond
-        (and (specs/element? elem) (= 0 (count elems)))
-        (tf/translate-element [x y] elem)
-        
-        #_(and (specs/element? elem) (< 0 (count elems)))
-        #_(concat
-         [(tf/translate-element [x y] elem)]
-         [(tr [x y] elems)])
-      
-        #_:else
-        #_f(recur [x y] (concat elem elems))))))
-
+#_(-> "drawing.png"
+      img->str
+      str->elements 
+      (->> (mapcat split-path)))
 
 (defn re-center
   [seq]
   (let [group (g seq)
-        ctr (mapv float (centroid group))]
+        ctr (mapv float (tf/centroid group))]
     (->> seq
-         (map #(tf/translate-element (utils/v* [-1 -1] ctr) %)))))
+         (map #(tf/translate (utils/v* [-1 -1] ctr) %)))))
 
 #+end_src
 
@@ -743,6 +985,7 @@ This script requires vtracer to be installed and available on your PATH.
   (:require [clojure.java.shell :refer [sh]]
             [clojure.string :as str]
             [hiccup.core :refer [html]]
+            [cheshire.core :refer [parse-string]]
             [svg-clj.main :as svg]
             [svg-clj.path :as path]
             [svg-clj.transforms :as tf]))
@@ -756,13 +999,49 @@ This script requires vtracer to be installed and available on your PATH.
   [fname]
   (re-find #"\.[A-Za-z\d+]+" fname))
 
-(defn get-resolution
+(defn get-resolution-old
   [fname]
   (->> (sh "ffprobe" "-i" fname)
        :err
        (re-find #"\d\d+x\d+")
        (#(str/split % #"x"))
        (mapv read-string)))
+
+(defn get-resolution
+  [fname]
+  (when-let [{:keys [width height]}
+             (-> (sh "ffprobe"
+                     "-v"
+                     "error"
+                     "-select_streams"
+                     "v:0"
+                     "-show_entries"
+                     "stream=width,height"
+                     "-of" "json"
+                     fname)
+                 :out
+                 (parse-string true)
+                 :streams
+                 first)]
+    [width height]))
+
+(defn get-duration
+  [fname]
+  (when-let [{:keys [duration]}
+             (-> (sh "ffprobe"
+                     "-v"
+                     "error"
+                     "-select_streams"
+                     "v:0"
+                     "-show_entries"
+                     "stream=duration"
+                     "-of" "json"
+                     fname)
+                 :out
+                 (parse-string true)
+                 :streams
+                 first)]
+    (read-string duration)))
 
 (defn overlay-offsets
   [{:keys [border base-dims overlay-dims pos gap fname]}]
@@ -873,6 +1152,8 @@ Idea from Maikerusan
 #+END_SRC
 
 ** png!
+Consider trying batik-rasterize library.
+
 #+BEGIN_SRC clojure :tangle ./src/vidwiz.clj
 (defn png! [fname svg-data]
   (sh "convert" "-background" "none" "/dev/stdin" fname
@@ -977,6 +1258,11 @@ because you can think of it like this:
 (def example-layers 
   [{:file "clip001-bb.mov" :x 0 :y 0 :z 0}
    {:file "drw2.webm" :x 0 :y (- 1080 600) :z 1}])
+#+END_SRC
+
+** chroma
+#+BEGIN_SRC clojure :tangle ./src/vidwiz.clj
+
 
 #+end_src
 
@@ -1233,7 +1519,7 @@ Make vertical footage look better by scaling and blurring the footage to fill bl
 #+BEGIN_SRC clojure :tangle ./src/vidwiz.clj
 (defn nicer-vertical
   [fname]
-  (let [[name ext] (st/split fname #"\.")
+  (let [[name ext] (str/split fname #"\.")
         nfname (apply str [name "-nice" "." ext])]
     (sh "ffmpeg"
         "-i" fname
@@ -1541,31 +1827,56 @@ Matrix transform for isometric view from:
          [{:file "circle.webm" :x 0 :y 0 :t 0}
           {:file "circle2.webm" :x 0 :y 0 :t 0}])
   )
-
 #+END_SRC
 
 ** assets
 #+BEGIN_SRC clojure :tangle ./src/vidwiz.clj
-(def bg
-  (svg/svg 
-   [1920 1080 1]
-   (->> (svg/rect 1920 1080)
-        (tf/translate [960 540])
-        (svg/style {:fill "rgb(45,52,64)"}))
-   (for [x (range 0 1920 75)
-         y (range 0 1080 75)]
-     (->> (svg/text "adam-james")
-          (tf/rotate -45)
-          (tf/translate [x y])
-          (svg/style {:fill "none"
-                      :stroke-dasharray 100
-                      :stroke-dashoffset 100
-                      :animation "draw 2s linear forwards"
-                      :stroke-width "1px"
-                      :stroke "hotpink"
-                      :font-family "Oswald"
-                      :font-weight "600"
-                      :font-size "16"})))))
+(def title-anim
+  {:name "twitch"
+   :framerate 60
+   :duration 5
+   :graphics-fn
+   (fn [t]
+     (let [nt (ease-in-out-cubic t)]
+       (svg/svg 
+        [1920 1080 1]
+        #_(->> (svg/circle (* 1200 2 nt))
+             (tf/translate [960 540])
+             (svg/style {:fill "rgb(45,52,64)"}))
+        (->> (svg/text "twitch.tv/adam_james_tv")
+             (tf/rotate 0)
+             (tf/translate [960 540])
+             (tf/translate [0 450])
+             (svg/style {:fill "#FEFEFE"
+                         :opacity "0.90"
+                         :text-anchor "middle"
+                         :font-family "Oswald"
+                         :font-weight "600"
+                         :font-size "120px"}))
+        (->> (svg/text "twitch.tv/adam_james_tv")
+             (tf/rotate 0)
+             (tf/translate [960 540])
+             (tf/translate [0 450])
+             (svg/style {:fill "#9146FF"
+                         :opacity "0.25"
+                         :text-anchor "middle"
+                         :font-family "Oswald"
+                         :font-weight "600"
+                         :font-size "120px"}))
+        (->> (svg/text "twitch.tv/adam_james_tv")
+             (tf/rotate 0)
+             (tf/translate [960 540])
+             (tf/translate [0 450])
+             (svg/style {:fill "none"
+                         :stroke-dasharray 700
+                         :stroke-dashoffset (* 700 (- 1 nt))
+                         :stroke-width "2px"
+                         :stroke "#9146FF"
+                         :text-anchor "middle"
+                         :font-family "Oswald"
+                         :font-weight "600"
+                         :font-size "120px"})))))})
+
 #+END_SRC
 
 ** stream-highlighting-proto
@@ -1608,7 +1919,7 @@ After all clips made,
         base-clip-name (str name "/base-clip")
         xf-clip-name (str name "/base-clip-bub.mov")]
     ;; create clip directory
-    (sh "mkdir" (str name))
+    (sh "mkdir" "-pv" (str name))
     ;; create all animation layers
     (animate! {:name anim-name 
                :duration 5
@@ -1633,13 +1944,66 @@ After all clips made,
 
 #+END_SRC
 
+** crossfade-scratch
+
+[[https://superuser.com/a/1643589]]
+
+ffmpeg -i clip001.mov -i clip002.mov \
+-filter_complex \
+"color=black:1920x1080:d=96.000[base]; \
+[0:v]setpts=PTS-STARTPTS[v0]; \
+[1:v]format=yuva420p,fade=in:st=0:d=2:alpha=1,setpts=PTS-STARTPTS+((75-2)/TB)[v1]; \
+[base][v0]overlay[tmp]; \
+[tmp][v1]overlay,format=yuv420p[fv]; \
+[0:a][1:a]acrossfade=d=2[fa]" \
+-map "[fv]" -map "[fa]" out.mov
+
+
+ffmpeg -i clip001.mov -i clip002.mov \
+-filter_complex \
+"color=black:1920x1080:d=__TOTAL_DIR__[base]; \
+[0:v]setpts=PTS-STARTPTS[v0]; \
+[1:v]format=yuva420p,fade=in:st=0:d=__CROSS_DUR__:alpha=1,setpts=PTS-STARTPTS+(__A_DUR__/TB)[v1]; \
+[base][v0]overlay[tmp]; \
+[tmp][v1]overlay,format=yuv420p[fv]; \
+[0:a][1:a]acrossfade=d=__CROSS_DUR__[fa]" \
+-map "[fv]" -map "[fa]" out.mov
+
+__TOTAL_DUR__ = (+ clip-a-dur clip-b-dur (- crossfade-dur))
+__CROSS_DUR__ = crossfade-dur
+__A_DUR__ = (- clip-a-dur crossfade-dur)
+
+#+BEGIN_SRC clojure :tangle ./src/vidwiz.clj
+(defn crossfade
+  [[fnamea fnameb] dur]
+  (let [[namea exta] (str/split fnamea #"\.")
+        [nameb extb] (str/split fnameb #"\.")
+        nameb (last (str/split nameb #"/"))
+        fname (str namea "-" nameb "." exta)
+        dura (get-duration fnamea)
+        durb (get-duration fnameb)
+        [w h] (get-resolution fnamea)
+        total-dur (+ dura durb (- dur))]
+    (sh "ffmpeg"
+        "-i" fnamea
+        "-i" fnameb
+        "-filter_complex"
+        (str "color=black:1920x1080:d=" total-dur "[base];"
+             "[0:v]setpts=PTS-STARTPTS[v0];"
+             "[1:v]format=yuva420p,fade=in:st=0:d=" dur ":alpha=1,setpts=PTS-STARTPTS+(" (- dura dur) "/TB)[v1];"
+             "[base][v0]overlay[tmp];"
+             "[tmp][v1]overlay,format=yuv420p[fv];"
+             "[0:a][1:a]acrossfade=d=" dur "[fa]")
+        "-map" "[fv]" "-map" "[fa]"
+        "-y" fname)))
+
+#+END_SRC
+
 ** cli
 I'll need to come up with a more general CLI that lets me do the various things I want. Not every video project needs the same functionality, so having a single expected map format as the input isn't quite useful enough.
 
-
-
 #+BEGIN_SRC clojure :tangle ./src/vidwiz.clj
-#_(spit "props.edn" 
+(def example-props
     {:screen
      {:fname "scr.mov"
       :left {:width 667 :offset 0}
@@ -1655,6 +2019,16 @@ I'll need to come up with a more general CLI that lets me do the various things 
       :gap 70
       :pos {:h :r :v :b}}})
 
+(defn stream-highlighter
+  []
+  (let [fname (first *command-line-args*)
+        clips (when (= (get-extension fname) ".edn")
+                (read-string (slurp fname)))]
+    (do
+      (println (str "Total Seconds: " (reduce + (map :duration clips))))
+      (mapv stream-highlight-clip! clips)
+      #_(println "done"))))
+
 (defn main
   "Main runs when vidwiz is run as a script.
   
@@ -1666,12 +2040,12 @@ I'll need to come up with a more general CLI that lets me do the various things 
         props (when (= (get-extension fname) ".edn")
                 (read-string (slurp fname)))]
     (when props
-      #_(crop-pad-screen (:screen props))
+      (crop-pad-screen (:screen props))
       (pad-screen (:screen props))
       (overlay-camera  (:camera props))
       (fix-audio "merged.mov")
       (sh "cp" "fixed-audio.mov" "_precut.mov"))))
 
-#_(main)
+#_(stream-highlighter)
 
 #+end_src
