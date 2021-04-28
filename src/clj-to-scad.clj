@@ -13,7 +13,8 @@
             [svg-clj.utils :as utils]
             [svg-clj.transforms :as tf]
             [scad-clj.model :refer :all]
-            [scad-clj.scad :refer [write-scad]]))
+            [scad-clj.scad :refer [write-scad]]
+            [scad-clj.csg :refer [write-csg]]))
 
 (defn clj-file->scad-block
   [fname]
@@ -27,13 +28,13 @@
 
 (defn png!
   [fname scad-block]
-  (let [scad (write-scad [(fn! 150) scad-block])]
+  (let [scad (write-scad [(fn! 250) scad-block])]
     (sh "openscad" "/dev/stdin"
         "--imgsize" "600,600"
         "--projection" "orthogonal"
         "--colorscheme" "greenscreen"
         "--camera" "0,0,0,55,0,25,2200"
-        "-o" fname
+        "--render" "-o" fname
         :in scad)))
 
 (defn- anim-frames! [f name framerate dur]
@@ -65,6 +66,7 @@
     (sh "vtracer" 
         "--mode" "polygon"
         "--colormode" "bw"
+        "--segment_length" "3.5"
         "--input" fname
         "--output" new-fname)
     (let [svg-str (slurp new-fname)]
@@ -143,6 +145,10 @@
   [pts]
   (map #(conj % 0) pts))
 
+(defn add-dist-z
+  [pts]
+  (map #(conj % (* 0.005 (distance [0 0] %) (distance [0 0] %))) pts))
+
 (defn line-drawing
   [fname]
   (-> fname
@@ -151,7 +157,8 @@
       re-center
       (->> (mapcat split-path))
       (->> (map path->pts))
-      (->> (map add-z))
+      (->> (map flip-y))
+      (->> (map add-dist-z))
       (->> (map polyline))
       union))
 
@@ -173,7 +180,7 @@
   (-> fname
       img->str
       str->elements
-      #_re-center
+      re-center
       (->> (map svg-path-elem->scad-polygon))
       union))
 
@@ -223,6 +230,55 @@
      (->> (drawing "drawing4.png")
           (extrude-rotate {:angle (* t 360)})
           (translate [0 0 300])))})
+
+(def skulltop (->> (drawing "skull0.png")
+                (translate [188.75 0 0])
+                (extrude-rotate)
+                (translate [0 0 351])))
+
+(def jaw
+  (let [cutter (translate [0 0 -150] skulltop)]
+    (difference
+     (->> (drawing "skull2.png")
+          (translate [0 0 0])
+          (extrude-linear {:height 2000})
+          (rotate [(deg->rad 90) 0 0])
+          (intersection cutter))
+     (translate [0 100 0] (cube 2000 400 2000)))))
+
+(def face
+  (let [leye (translate [-140 0 0] (drawing "skull3.png"))
+        reye (translate [ 140 0 0] (drawing "skull4.png"))
+        nose (translate [0 -180 0] (drawing "skull5.png"))]
+    (->> [leye reye nose]
+         (extrude-linear {:height 300})
+         (rotate [(deg->rad 90) 0 0]))))
+
+(def skull
+   (color 
+    [0.8 0.8 0.85 1]
+    (difference
+     (union
+      (translate [0 0 0] skulltop)
+      (translate [0 1 -30] jaw)
+      (difference
+       (translate [0 20 -30] jaw)
+       (translate [0 0 260] (cube 700 700 500)))
+      (difference
+       (translate [0 40 -30] jaw)
+       (translate [0 0 260] (cube 700 700 500))))
+     (translate [0 -200 270] face))))
+ 
+#_(spit "cube.scad" (write-scad skull))
+
+
+(def skull-anim
+  {:name "skull"
+   :framerate 60
+   :duration 5
+   :graphics-fn
+   (fn [t]
+     (rotate [0 0 (* t (deg->rad 360))] (translate [0 0 -200] skull)))})
 
 (defn build
   [fname]
