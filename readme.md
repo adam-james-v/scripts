@@ -9,7 +9,7 @@ Notes can be found in the [scripts.org](https://github.com/adam-james-v/scripts/
 Everything's free to use and modify.
 
 ## Usage
-I use scripter.clj and uberscripter.clj to 'build' my src scripts. 
+I use scripter.clj and uberscripter.clj to 'build' my src scripts.
 
 ```
 bb uberscripter.clj src/some-script.clj
@@ -64,6 +64,6 @@ Feel free to fork, clone, make PRs, whatever.
 
 Changes will be implemented at my discretion, because these are scripts tuned to my needs/workflow anyway.
 
-You can create issues to bring up improvements, questions, and ideas as well, if you'd like. 
+You can create issues to bring up improvements, questions, and ideas as well, if you'd like.
 
 Be kind and constructive.

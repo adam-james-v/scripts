@@ -15,7 +15,8 @@
             [svg-clj.elements :as el]
             [svg-clj.composites :as composites :refer [svg]]
             [svg-clj.path :as path]
-            [svg-clj.transforms :as tf]))
+            [svg-clj.transforms :as tf]
+            [svg-clj.utils :as utils]))
 
 ;; utils
 (defn get-extension
@@ -124,7 +125,7 @@
 
 (defn yt-url->video-data [url]
   (let [[title video-url audio-url]
-        (-> (sh "youtube-dl" 
+        (-> (sh "youtube-dl"
                 "--get-title" "--youtube-skip-dash-manifest" "-g" url)
             (:out)
             (str/split-lines))]
@@ -133,7 +134,7 @@
      :video-url video-url}))
 
 (defn save-clip! [video-url audio-url time dur fname]
-  (sh "ffmpeg" 
+  (sh "ffmpeg"
       "-ss" (str time)
       "-i" video-url
       "-ss" (str time)
@@ -151,7 +152,7 @@
          start-time (seconds->timestamp (read-string (:t urlp)))
          fname (str name ".mov")]
      (save-clip! video-url audio-url start-time duration fname)))
-  
+
   ([name url start-time duration]
    (let [urlp (parse-url url)
          data (yt-url->video-data (:full-url urlp))
@@ -167,7 +168,7 @@
 ;; z-index suggested by maacl72
 (defn- layer-input-partial [{:keys [file]}]
   (let [[name ext] (str/split file #"\.")]
-    (concat 
+    (concat
      (when (= ext "webm") ["-vcodec" "libvpx-vp9"])
      ["-i" file])))
 
@@ -200,7 +201,7 @@
              #_["-c:a" "copy" "-map" "0:a:0"]
              ["-y" fname])))
 
-(def example-layers 
+(def example-layers
   [{:file "clip001-bb.mov" :x 0 :y 0 :z 0}
    {:file "drw2.webm" :x 0 :y (- 1080 600) :z 1}])
 
@@ -216,7 +217,7 @@
         col (get-bg-color fname)]
     (sh "ffmpeg"
         "-i" fname
-        "-f" "lavfi" 
+        "-f" "lavfi"
         "-i" (str "color=" col ":s=1920x1080")
         "-filter_complex"
         (str "[1:v][0:v]overlay=" ow ":" oh ":shortest=1")
@@ -224,7 +225,7 @@
 
 (defn crop-pad-screen
   "A multi-step transformation for screen recording footage.
-  
+
   The following sequence of transforms are handled using ffmpeg's 'filter_complex':
    - crop and pad screen recording
    - cut screen footage into left side and right side
@@ -240,7 +241,7 @@
         col (get-bg-color fname)]
     (sh "ffmpeg"
         "-i" fname
-        "-f" "lavfi" 
+        "-f" "lavfi"
         "-i" (str "color=" col ":s=1920x1080")
         "-filter_complex"
         (str "[0:v]crop=" (:width left) ":" h ":" (:offset left) ":0[l];"
@@ -265,11 +266,11 @@
 
 (defn clap-time
   "Find time in seconds at which a clap is detected in the audio stream of fname.
-  
+
   The detection assumes that a clap sound exists within the first 12 seconds of a given clip."
   [fname]
   (->> (sh "ffmpeg" "-i" fname
-           "-ss" "00:00:00" "-t" "00:00:12" 
+           "-ss" "00:00:00" "-t" "00:00:12"
            "-af" "silencedetect=noise=0.6:d=0.01"
            "-f" "null" "-")
        :err
@@ -282,7 +283,7 @@
 
 (defn overlay-camera
   "Composes the final footage by overlaying the camera footage onto the screen footage according to given properties.
-  
+
   The composition is handled using ffmpeg's 'filter_complex', and several actions occur:
    - overlays camera footage with border onto screen footage
    - given screen footage, camera footage, and border width and color create combined video
@@ -295,13 +296,13 @@
   [{:keys [border overlay-dims camf scrf] :as props}]
   (let [{:keys [width color]} border
         [cw ch] (map #(+ (* 2 width) %) overlay-dims)
-        [ow oh] (overlay-offsets (assoc props :fname scrf 
+        [ow oh] (overlay-offsets (assoc props :fname scrf
                                         :base-dims (get-resolution scrf)))
         delay (- (clap-time scrf) (clap-time camf))]
     (sh "ffmpeg"
         "-i" scrf
         "-i" camf
-        "-f" "lavfi" 
+        "-f" "lavfi"
         "-i" (str "color=" color ":s=" cw "x" ch)
         "-filter_complex"
         (str "[1:v]scale=" (apply str (interpose "x" overlay-dims)) "[scv];"
@@ -452,13 +453,13 @@
   (let [dur (- e s)
         tmpf (str (str/replace (str s) "." "_")
                   "-" fname)]
-    (sh "ffmpeg" "-i" fname 
+    (sh "ffmpeg" "-i" fname
         "-ss" (str s) "-t" (str dur)
         tmpf)))
 
 (defn cut-merge
   [fname times]
-  (let [fnames (map 
+  (let [fnames (map
                 #(str (str/replace (str (:s %)) "." "_")
                       "-" fname)
                 times)]
@@ -488,15 +489,15 @@
 
 (defn svg2
   [[w h sc] & content]
-  (assoc-in 
-   (svg [w h sc] 
+  (assoc-in
+   (svg [w h sc]
             font-import
             content)
    [1 :viewBox]
    (str/join " " [(/ w -2.0) (/ h -2.0) w h])))
 
 #_(def test-overlay
-  (let [obj 
+  (let [obj
         (fn [t]
           (->> (iso-text "adam-james")
                (tf/style {:fill (str "rgb(100,170,123)")
@@ -515,7 +516,7 @@
 
 (defn iso-title
   [s]
-  (let [obj 
+  (let [obj
         (fn [t]
           (->> (iso-text s)
                (tf/style {:fill (str "rgb(100,170,123)")
@@ -535,14 +536,14 @@
 (defn- anim-frames! [f name framerate dur]
   (let [mkdir (sh "mkdir" "-pv" name)
         frames (int (* framerate dur))
-        framefn (fn [fr] (png! 
+        framefn (fn [fr] (png!
                           (format (str name "/%03d.png") fr)
-                          (f (/ fr frames))))]
+                          (f (double (/ fr frames)))))]
     (when (= 0 (:exit mkdir))
-      (into [] (map framefn (range 1 (inc frames)))))))
+      (into [] (pmap framefn (range 1 (inc frames)))))))
 
 (defn- anim-video! [name framerate]
-  (let [ffmpeg 
+  (let [ffmpeg
         (sh "ffmpeg" "-f" "image2" "-r" (str framerate)
             "-i" (str name "/%03d.png")
             "-c:v" "libvpx-vp9" "-vf" "format=rgba"
@@ -552,28 +553,92 @@
       (sh "rm" "-rf" name))))
 
 (defn animate! [{:keys [graphics-fn name framerate duration]}]
-  (do (anim-frames! graphics-fn name framerate duration)
-      (anim-video! name framerate)))
+  (anim-frames! graphics-fn name framerate duration)
+  (anim-video! name framerate))
 
 (defn ease-in-out-cubic [t]
   (if (< t 0.5)
     (* 4 t t t)
     (- 1 (/ (Math/pow (+ 2 (* t -2)) 3) 2))))
 
+(defn next-collatz
+  [n]
+  (if (even? n)
+    (/ n 2)
+    (+ (* 3 n) 1)))
+
+(defn collatz
+  [n]
+  (when (> n 0)
+    (->> (iterate next-collatz n)
+         (take-while #(not (= 1 %)))
+         reverse
+         (cons 1))))
+
+(defn collatz->pts
+  [n {:keys [angle length]}]
+  (let [collatz-seq (collatz n)
+        #_#_angle (* angle (count collatz-seq))
+        length (double (/ length (count collatz-seq)))
+        f (fn [last-a pts s]
+            (if (empty? s)
+              pts
+              (let [[n xs] ((juxt first rest) s)
+                    a-dir (if (even? n) 1 -1)
+                    xa (+ last-a (* angle a-dir))
+                    pt (-> [length 0]
+                           (svg-clj.utils/rotate-pt xa)
+                           (utils/v+ (last pts))
+                           (->> (mapv #(utils/round % 3))))]
+                (recur xa (conj pts pt) xs))))]
+    (f 0 [[0 0]] collatz-seq)))
+
+(defn get-middle
+  [pts]
+  (let [n (int (/ (count pts) 2))]
+    (if (even? (count pts))
+      (nth (vec pts) n)
+      (utils/centroid-of-pts [(nth pts n) (nth pts (dec n))]))))
+
+(defn collatz-lines
+  [t]
+  (let [t (ease-in-out-cubic t)]
+    (->
+      (el/g
+        (-> (el/rect 910 910)
+            (tf/style {:fill "#2F2761"}))
+        (for [n (range 400)]
+          (let [pts (collatz->pts (+ 4500 n) {:angle (+ 0.01 (* t t 360))
+                                              :length 700})]
+            (-> (el/polyline pts)
+                (tf/translate (utils/v* [-1 -1 -1] (get-middle pts)))
+                (tf/style {:fill "none"
+                           :stroke "#ABA1E6"
+                           :opacity 0.15
+                           :stroke-width 1})))))
+        (tf/translate [450 450])
+      (svg 900 900))))
+
+(def collatz-anim
+  {:name "collatz"
+   :framerate 90
+   :duration 12
+   :graphics-fn collatz-lines})
+
 (def circle-anim
   {:name "circle"
-   :framerate 30
+   :framerate 3
    :duration 4
    :graphics-fn
    (fn [t]
      (let [nt (ease-in-out-cubic t)]
-       (svg [600 600]
-            (->> (el/circle 35)
-                 (tf/translate [-300 -300])
-                 (tf/translate [(* nt 600) (* nt 600)])
-                 (tf/style {:fill "pink"
-                             :stroke "hotpink"
-                             :stroke-width "4px"})))))})
+       (-> (el/circle 35)
+           (tf/translate [-300 -300])
+           (tf/translate [(* nt 600) (* nt 600)])
+           (tf/style {:fill "pink"
+                      :stroke "hotpink"
+                      :stroke-width "4px"})
+           (svg 600 600))))})
 
 (def draw-anim
   {:name "drw"
@@ -711,7 +776,7 @@
    :graphics-fn
    (fn [t]
      (let [nt (ease-in-out-cubic t)]
-       (svg 
+       (svg
         [1920 1080 1]
         #_(->> (svg/circle (* 1200 2 nt))
              (tf/translate [960 540])
@@ -769,7 +834,7 @@
     ;; create clip directory
     (sh "mkdir" "-pv" (str name))
     ;; create all animation layers
-    (animate! {:name anim-name 
+    (animate! {:name anim-name
                :duration 5
                :framerate 30
                :graphics-fn (draw-title title)})
@@ -782,7 +847,7 @@
     ;; clip 'effect'
     (blur-uneven-border (str base-clip-name ".mov") 1920 1080 1600 900 300 20)
     ;; compose all layers
-    (layer fname 
+    (layer fname
            [{:file xf-clip-name :x 0 :y 0 :z 0}
             {:file (str anim-name ".webm") :x -30 :y (- 1080 500) :z 1}
             {:file (str anim2-name ".webm") :x (- 1920 1000) :y (- 1080 250) :z 2}])
@@ -840,7 +905,7 @@
 
 (defn main
   "Main runs when vidwiz is run as a script.
-  
+
   You can run this program with babashka:
    - chmod +x vidwiz.clj
    - ./vidwiz props.edn"

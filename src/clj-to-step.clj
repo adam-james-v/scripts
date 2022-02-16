@@ -37,7 +37,7 @@ del __objs__"))
          (exporter-script (str path "/scadout.csg"))
          (spit "fcscript.py"))
     (sh "freecad" "fcscript.py")
-    (sh "rm" "-rf" 
+    (sh "rm" "-rf"
         "fcscript.py"
         "parsetab.py"
         "scadout.csg"

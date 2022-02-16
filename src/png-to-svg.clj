@@ -21,7 +21,7 @@
 (defn img->str [fname]
   "Ingest image file `fname` and transform it into a hiccup data structure."
   (let [new-fname (str (first (st/split fname #"\.")) ".svg")]
-    (sh "vtracer" 
+    (sh "vtracer"
         "--mode" "polygon"
         "--colormode" "bw"
         "--input" fname
@@ -66,7 +66,7 @@
 
 #_(-> "drawing.png"
       img->str
-      str->elements 
+      str->elements
       (->> (mapcat split-path)))
 
 (defn re-center

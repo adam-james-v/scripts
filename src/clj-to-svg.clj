@@ -167,7 +167,7 @@
       (into [] (map framefn (range 1 (inc frames)))))))
 
 (defn- anim-video! [name framerate]
-  (let [ffmpeg 
+  (let [ffmpeg
         (sh "ffmpeg" "-f" "image2" "-r" (str framerate)
             "-i" (str name "/%03d.png")
             "-c:v" "libvpx-vp9" "-vf" "format=rgba"

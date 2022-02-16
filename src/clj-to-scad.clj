@@ -42,14 +42,14 @@
 (defn- anim-frames! [f name framerate dur]
   (let [mkdir (sh "mkdir" "-pv" name)
         frames (int (* framerate dur))
-        framefn (fn [fr] (png! 
+        framefn (fn [fr] (png!
                           (format (str name "/%03d.png") fr)
                           (f (/ fr frames))))]
     (when (= 0 (:exit mkdir))
       (into [] (map framefn (range 1 (inc frames)))))))
 
 (defn- anim-video! [name framerate]
-  (let [ffmpeg 
+  (let [ffmpeg
         (sh "ffmpeg" "-f" "image2" "-r" (str framerate)
             "-i" (str name "/%03d.png")
             "-c:v" "libvpx-vp9"
@@ -65,7 +65,7 @@
 (defn img->str [fname]
   "Ingest image file `fname` and transform it into a hiccup data structure."
   (let [new-fname (str (first (str/split fname #"\.")) ".svg")]
-    (sh "vtracer" 
+    (sh "vtracer"
         "--mode" "polygon"
         "--colormode" "bw"
         "--segment_length" "3.5"
@@ -111,7 +111,7 @@
 
 #_(-> "drawing.png"
       img->str
-      str->elements 
+      str->elements
       (->> (mapcat split-path)))
 
 (defn re-center
@@ -253,8 +253,8 @@
                  (color body-col)))]
     (union
      moth-eyes
-     (rotate 
-      [0 (deg->rad 30) 0] 
+     (rotate
+      [0 (deg->rad 30) 0]
       sk
       (rotate [0 (deg->rad 60) 0] sk)
       (rotate [0 (deg->rad -60) 0] sk)))))
@@ -316,9 +316,9 @@
    :graphics-fn
    (fn [t]
      (let [nt (* t 2 Math/PI)]
-       (translate 
+       (translate
         [0 0 -150]
-        (rotate 
+        (rotate
          [0 0 (* t (deg->rad 360))]
          (union
           moth-body
