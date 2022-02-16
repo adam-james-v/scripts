@@ -3,12 +3,14 @@
 (babashka.deps/add-deps
  '{:deps
    #_{scad-clj/scad-clj {:mvn/version "0.5.3"}}
-   {scad-clj/scad-clj {:local/root "/Users/adam/dev/scad-clj"}}})
+   {svg-clj/svg-clj {:local/root "/Users/adam/dev/svg-clj"}
+    scad-clj/scad-clj {:local/root "/Users/adam/dev/scad-clj"}}})
 
 (ns clj-to-scad.main
   (:require [clojure.java.shell :refer [sh]]
             [clojure.string :as str]
             [clojure.data.xml :as xml]
+            [svg-clj.main :as svg]
             [svg-clj.path :as path]
             [svg-clj.utils :as utils]
             [svg-clj.transforms :as tf]
@@ -28,13 +30,13 @@
 
 (defn png!
   [fname scad-block]
-  (let [scad (write-scad [(fn! 250) scad-block])]
+  (let [scad (write-scad [(fn! 20) scad-block])]
     (sh "openscad" "/dev/stdin"
-        "--imgsize" "600,600"
+        "--imgsize" "1200,1200"
         "--projection" "orthogonal"
-        "--colorscheme" "greenscreen"
-        "--camera" "0,0,0,55,0,25,2200"
-        "--render" "-o" fname
+        "--colorscheme" "greenscreen" #_"DeepOcean"
+        "--camera" "0,0,0,55,0,25,2900"
+        "-o" fname
         :in scad)))
 
 (defn- anim-frames! [f name framerate dur]
@@ -114,14 +116,14 @@
 
 (defn re-center
   [seq]
-  (let [group (svg-clj.main/g seq)
+  (let [group (svg/g seq)
         ctr (mapv float (tf/centroid group))]
     (->> seq
          (map #(tf/translate (utils/v* [-1 -1] ctr) %)))))
 
 (defn line
   [from to]
-  (let [r 0.7]
+  (let [r 2.75]
     (color [0 0 0 1]
            (if (= from to)
              (sphere r)
@@ -145,9 +147,9 @@
   [pts]
   (map #(conj % 0) pts))
 
-(defn add-dist-z
+(defn- flip-y
   [pts]
-  (map #(conj % (* 0.005 (distance [0 0] %) (distance [0 0] %))) pts))
+  (map #(utils/v* % [1 -1]) pts))
 
 (defn line-drawing
   [fname]
@@ -158,13 +160,9 @@
       (->> (mapcat split-path))
       (->> (map path->pts))
       (->> (map flip-y))
-      (->> (map add-dist-z))
+      (->> (map add-z))
       (->> (map polyline))
       union))
-
-(defn- flip-y
-  [pts]
-  (map #(utils/v* % [1 -1]) pts))
 
 (defn svg-path-elem->scad-polygon
   [path-elem]
@@ -231,54 +229,108 @@
           (extrude-rotate {:angle (* t 360)})
           (translate [0 0 300])))})
 
-(def skulltop (->> (drawing "skull0.png")
-                (translate [188.75 0 0])
-                (extrude-rotate)
-                (translate [0 0 351])))
+(def wing-col (mapv #(/ % 255.0) [0 255 0 255]))
+(def wing-col2 (mapv #(/ % 255.0) [0 255 0 255]))
+(def wing-col3 (mapv #(/ % 255.0) [0 255 0 255]))
+(def body-col (mapv #(/ % 255.0) [0 255 0 255]))
 
-(def jaw
-  (let [cutter (translate [0 0 -150] skulltop)]
-    (difference
-     (->> (drawing "skull2.png")
-          (translate [0 0 0])
-          (extrude-linear {:height 2000})
-          (rotate [(deg->rad 90) 0 0])
-          (intersection cutter))
-     (translate [0 100 0] (cube 2000 400 2000)))))
+(def moth-eyes
+  (union
+   (->> (line-drawing "moth-sk/eyes.png")
+        (rotate [(deg->rad 25) 0 0])
+        (translate [0 220 43]))
+   (->> (drawing "moth-sk/eyes.png")
+        (extrude-linear {:height 5})
+        (rotate [(deg->rad 25) 0 0])
+        (translate [0 220 43])
+        (color body-col))))
 
-(def face
-  (let [leye (translate [-140 0 0] (drawing "skull3.png"))
-        reye (translate [ 140 0 0] (drawing "skull4.png"))
-        nose (translate [0 -180 0] (drawing "skull5.png"))]
-    (->> [leye reye nose]
-         (extrude-linear {:height 300})
-         (rotate [(deg->rad 90) 0 0]))))
+(def moth-body
+  (let [sk (union
+            (line-drawing "moth-sk/body.png")
+            (->> (drawing "moth-sk/body.png")
+                 (extrude-linear {:height 3})
+                 (color body-col)))]
+    (union
+     moth-eyes
+     (rotate 
+      [0 (deg->rad 30) 0] 
+      sk
+      (rotate [0 (deg->rad 60) 0] sk)
+      (rotate [0 (deg->rad -60) 0] sk)))))
 
-(def skull
-   (color 
-    [0.8 0.8 0.85 1]
-    (difference
-     (union
-      (translate [0 0 0] skulltop)
-      (translate [0 1 -30] jaw)
-      (difference
-       (translate [0 20 -30] jaw)
-       (translate [0 0 260] (cube 700 700 500)))
-      (difference
-       (translate [0 40 -30] jaw)
-       (translate [0 0 260] (cube 700 700 500))))
-     (translate [0 -200 270] face))))
- 
-#_(spit "cube.scad" (write-scad skull))
+(def right-wing
+  (->>
+   (union
+    (line-drawing "moth-sk/right-wing.png")
+    (->> (drawing "moth-sk/right-wing-outline.png")
+         (extrude-linear {:height 1})
+         (translate [-30 -60 0])
+         (color wing-col3))
+    (->> (drawing "moth-sk/right-wing.png")
+         (extrude-linear {:height 6})
+         (color wing-col))
+    (->> (drawing "moth-sk/right-wing-shading.png")
+         (extrude-linear {:height 4})
+         (rotate [(deg->rad 0) 0 0])
+         (translate [-24 52 0])
+         (color wing-col2)))
+   (translate [275 40 0])))
 
+(def left-wing
+  (->>
+   (union
+    (line-drawing "moth-sk/left-wing.png")
+    (->> (drawing "moth-sk/left-wing-outline.png")
+         (extrude-linear {:height 1})
+         (translate [14 -38 0])
+         (color wing-col3))
+    (->> (drawing "moth-sk/left-wing.png")
+         (extrude-linear {:height 6})
+         (color wing-col))
+    (->> (drawing "moth-sk/left-wing-shading.png")
+         (extrude-linear {:height 4})
+         (rotate [(deg->rad 0) 0 0])
+         (translate [-51 136 0])
+         (color wing-col2)))
+   (translate [-245 -5 0])))
 
-(def skull-anim
-  {:name "skull"
+(def moth
+  (union
+   moth-body
+   moth-eyes
+   (->> right-wing (rotate [0 (deg->rad -20) 0]))
+   (->>  left-wing (rotate [0 (deg->rad 20) 0]))))
+
+#_(spit "cube.scad" (write-scad moth))
+
+(defn ease-in-out-cubic [t]
+  (if (< t 0.5)
+    (* 4 t t t)
+    (- 1 (/ (Math/pow (+ 2 (* t -2)) 3) 2))))
+
+(def moth-anim
+  {:name "mothline"
    :framerate 60
    :duration 5
    :graphics-fn
    (fn [t]
-     (rotate [0 0 (* t (deg->rad 360))] (translate [0 0 -200] skull)))})
+     (let [nt (* t 2 Math/PI)]
+       (translate 
+        [0 0 -150]
+        (rotate 
+         [0 0 (* t (deg->rad 360))]
+         (union
+          moth-body
+          moth-eyes
+          (->> right-wing
+               (rotate [0 (deg->rad -18) 0])
+               (rotate [0 (deg->rad (* -60 (Math/sin nt))) 0]))
+          (->> left-wing
+               (rotate [0 (deg->rad 18) 0])
+               (rotate [0 (deg->rad (* 60 (Math/sin nt))) 0])))))))})
+
+(animate! moth-anim)
 
 (defn build
   [fname]

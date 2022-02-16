@@ -12,7 +12,8 @@
             [clojure.string :as str]
             [hiccup.core :refer [html]]
             [cheshire.core :refer [parse-string]]
-            [svg-clj.main :as svg]
+            [svg-clj.elements :as el]
+            [svg-clj.composites :as composites :refer [svg]]
             [svg-clj.path :as path]
             [svg-clj.transforms :as tf]))
 
@@ -196,7 +197,7 @@
              ["ffmpeg"]
              (layer-input layers)
              (layer-filter-complex layers)
-             ["-c:a" "copy" "-map" "0:a:0"]
+             #_["-c:a" "copy" "-map" "0:a:0"]
              ["-y" fname])))
 
 (def example-layers 
@@ -247,6 +248,20 @@
              "[l][r]hstack=inputs=2[scr];"
              "[1:v][scr]overlay=" ow ":" oh ":shortest=1")
         "-c:a" "copy" "-y" "cropped-screen.mov")))
+
+(defn crop-square
+  [fname]
+  (let [[w h] (get-resolution fname)
+        [name ext] (str/split fname #"\.")
+        fname-out (str name "-" "square" "." ext)
+        s (min w h)
+        offset (/ (- (max w h) s) 2)
+        [x y] (if (> w h) [offset 0] [0 offset])]
+    (sh "ffmpeg"
+        "-i" fname
+        "-filter:v"
+        (str "crop=" s ":" s ":" x ":" y)
+        "-c:a" "copy" "-y" fname-out)))
 
 (defn clap-time
   "Find time in seconds at which a clap is detected in the audio stream of fname.
@@ -468,23 +483,23 @@
 
 
 (defn iso-text [text]
-  (->> (svg/text text)
-       (svg/style {:transform "rotate(0 0 0) matrix(0.707 0.409 -0.707 0.409 0 -0.816)"})))
+  (->> (el/text text)
+       (tf/style {:transform "rotate(0 0 0) matrix(0.707 0.409 -0.707 0.409 0 -0.816)"})))
 
-(defn svg
+(defn svg2
   [[w h sc] & content]
   (assoc-in 
-   (svg/svg [w h sc] 
+   (svg [w h sc] 
             font-import
             content)
    [1 :viewBox]
    (str/join " " [(/ w -2.0) (/ h -2.0) w h])))
 
-(def test-overlay
+#_(def test-overlay
   (let [obj 
         (fn [t]
           (->> (iso-text "adam-james")
-               (svg/style {:fill (str "rgb(100,170,123)")
+               (tf/style {:fill (str "rgb(100,170,123)")
                            :stroke (str "rgb(80,210,145)")
                            :opacity t
                            :stroke-width "1px"
@@ -503,7 +518,7 @@
   (let [obj 
         (fn [t]
           (->> (iso-text s)
-               (svg/style {:fill (str "rgb(100,170,123)")
+               (tf/style {:fill (str "rgb(100,170,123)")
                            :stroke (str "rgb(80,210,145)")
                            :opacity t
                            :stroke-width "1px"
@@ -553,10 +568,10 @@
    (fn [t]
      (let [nt (ease-in-out-cubic t)]
        (svg [600 600]
-            (->> (svg/circle 35)
+            (->> (el/circle 35)
                  (tf/translate [-300 -300])
                  (tf/translate [(* nt 600) (* nt 600)])
-                 (svg/style {:fill "pink"
+                 (tf/style {:fill "pink"
                              :stroke "hotpink"
                              :stroke-width "4px"})))))})
 
@@ -569,10 +584,10 @@
      (let [nt (ease-in-out-cubic t)]
        (svg
         [600 600]
-        (->> (svg/rect 600 600)
-             (svg/style {:fill "rgb(45,52,64)"}))
+        (->> (el/rect 600 600)
+             (tf/style {:fill "rgb(45,52,64)"}))
         (->> (iso-text "adam-james")
-             (svg/style {:fill "none"
+             (tf/style {:fill "none"
                          :stroke-dasharray 600
                          :stroke-dashoffset (* 600 (- 1 nt))
                          :text-anchor "middle"
@@ -601,7 +616,7 @@
          [600 600 1]
          (->> (iso-text text)
               (tf/translate [5 5])
-              (svg/style {:fill "none"
+              (tf/style {:fill "none"
                           :opacity 0.15
                           :stroke-dasharray 600
                           :stroke-dashoffset (* 600 (- 1 nt))
@@ -613,7 +628,7 @@
                           :font-size "100"}))
          (->> (iso-text text)
               (tf/translate [2.5 2.5])
-              (svg/style {:fill "none"
+              (tf/style {:fill "none"
                           :opacity 0.5
                           :stroke-dasharray 600
                           :stroke-dashoffset (* 600 (- 1 nt))
@@ -624,7 +639,7 @@
                           :font-weight "600"
                           :font-size "100"}))
          (->> (iso-text text)
-              (svg/style {:fill "none"
+              (tf/style {:fill "none"
                           :stroke-dasharray 600
                           :stroke-dashoffset (* 600 (- 1 nt))
                           :text-anchor "middle"
@@ -641,9 +656,9 @@
       (let [nt (ease-in-out-cubic t)]
         (svg
          [900 300 1]
-         (->> (svg/text text)
+         (->> (el/text text)
               (tf/translate [0 2])
-              (svg/style {:fill "none"
+              (tf/style {:fill "none"
                           :opacity 0.15
                           :stroke-dasharray 600
                           :stroke-dashoffset (* 600 (- 1 nt))
@@ -652,9 +667,9 @@
                           :stroke "#eceff4"
                           :font-family "Menlo"
                           :font-size "29"}))
-         (->> (svg/text text)
+         (->> (el/text text)
               (tf/translate [0 1])
-              (svg/style {:fill "none"
+              (tf/style {:fill "none"
                           :opacity 0.5
                           :stroke-dasharray 600
                           :stroke-dashoffset (* 600 (- 1 nt))
@@ -663,8 +678,8 @@
                           :stroke "#eceff4"
                           :font-family "Menlo"
                           :font-size "29"}))
-         (->> (svg/text text)
-              (svg/style {:fill "none"
+         (->> (el/text text)
+              (tf/style {:fill "none"
                           :stroke-dasharray 600
                           :stroke-dashoffset (* 600 (- 1 nt))
                           :text-anchor "middle"
@@ -696,36 +711,36 @@
    :graphics-fn
    (fn [t]
      (let [nt (ease-in-out-cubic t)]
-       (svg/svg 
+       (svg 
         [1920 1080 1]
         #_(->> (svg/circle (* 1200 2 nt))
              (tf/translate [960 540])
              (svg/style {:fill "rgb(45,52,64)"}))
-        (->> (svg/text "twitch.tv/adam_james_tv")
+        (->> (el/text "twitch.tv/adam_james_tv")
              (tf/rotate 0)
              (tf/translate [960 540])
              (tf/translate [0 450])
-             (svg/style {:fill "#FEFEFE"
+             (tf/style {:fill "#FEFEFE"
                          :opacity "0.90"
                          :text-anchor "middle"
                          :font-family "Oswald"
                          :font-weight "600"
                          :font-size "120px"}))
-        (->> (svg/text "twitch.tv/adam_james_tv")
+        (->> (el/text "twitch.tv/adam_james_tv")
              (tf/rotate 0)
              (tf/translate [960 540])
              (tf/translate [0 450])
-             (svg/style {:fill "#9146FF"
+             (tf/style {:fill "#9146FF"
                          :opacity "0.25"
                          :text-anchor "middle"
                          :font-family "Oswald"
                          :font-weight "600"
                          :font-size "120px"}))
-        (->> (svg/text "twitch.tv/adam_james_tv")
+        (->> (el/text "twitch.tv/adam_james_tv")
              (tf/rotate 0)
              (tf/translate [960 540])
              (tf/translate [0 450])
-             (svg/style {:fill "none"
+             (tf/style {:fill "none"
                          :stroke-dasharray 700
                          :stroke-dashoffset (* 700 (- 1 nt))
                          :stroke-width "2px"
@@ -788,13 +803,13 @@
         "-i" fnamea
         "-i" fnameb
         "-filter_complex"
-        (str "color=black:1920x1080:d=" total-dur "[base];"
+        (str "color=black:" w "x" h ":d=" total-dur "[base];"
              "[0:v]setpts=PTS-STARTPTS[v0];"
              "[1:v]format=yuva420p,fade=in:st=0:d=" dur ":alpha=1,setpts=PTS-STARTPTS+(" (- dura dur) "/TB)[v1];"
              "[base][v0]overlay[tmp];"
-             "[tmp][v1]overlay,format=yuv420p[fv];"
-             "[0:a][1:a]acrossfade=d=" dur "[fa]")
-        "-map" "[fv]" "-map" "[fa]"
+             "[tmp][v1]overlay,format=yuv420p[fv]"
+             #_#_#_"[0:a][1:a]acrossfade=d=" dur "[fa]")
+        "-map" "[fv]" #_#_"-map" "[fa]"
         "-y" fname)))
 
 (def example-props

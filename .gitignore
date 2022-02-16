@@ -17,6 +17,8 @@ pom.xml.asc
 *.webm
 *.mov
 *.png
+*.jpg
+*.jpeg
 *.html
 *.svg
 *.mp4
